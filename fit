@@ -1,0 +1,287 @@
+#!/bin/bash
+
+# TODO
+# available VBoxes that are not Vagrant
+# Running Vagrant boxes against available boxes
+
+## define variables
+vagrantpath="$1"
+vagrantaction="$2"
+isvagrantrunning="No running Vagrant."
+vagrantactionDialogHeight=18
+dialogwidth=85
+validActions="^(up$|halt$|reload$|clear-cache$|switch-version$|shutdown-all$)"
+currentDir=""
+public_interface_status=""
+
+dialogOptions=''
+counter=0
+
+## ok, go with the flow
+clear
+countme=0
+(
+  # set infinite while loop
+  while :
+  do
+cat <<EOF
+XXX
+$countme
+\nSearching available and running/saved Vagrant Boxes... ( $countme%):
+XXX
+EOF
+    # increase counter by 10
+    (( countme+=10 ))
+    [ $countme -eq 100 ] && break
+    # delay it a specified amount of time i.e 1 sec
+    sleep .2
+  done
+) |
+dialog --title "Searching available Vagrant Boxes..." --gauge "Please wait" 8 $dialogwidth 0
+
+# http://wiki.ubuntuusers.de/shell/Bash-Skripting-Guide_f%C3%BCr_Anf%C3%A4nger
+
+
+# === pre dialog with available vagrant boxes =================================================
+# http://stackoverflow.com/questions/8213328/bash-script-find-output-to-array
+selectboxdialog() {
+  
+  getrunningvagrants
+
+  # === get all directories with a Vagrantfile
+  vagrantDirectories=( $(find ~/Workspace -type f -name "Vagrantfile") )
+  # echo "${vagrantDirectories[@]##*/}"
+  
+  ## build dialog options and set first vagrant box to on
+  for path in "${vagrantDirectories[@]}" ; do
+    if [ $counter == 0 ]
+      then
+        onOffToogle="on"
+      else
+        onOffToogle="off"
+    fi
+    dialogOptions="$dialogOptions $(dirname "$path") $(basename $(dirname "$path")) $onOffToogle"
+    counter=$(($counter+1))
+  done
+
+
+  ## show vagrant box selection dialog
+  choosenVagrantBox=$(dialog --stdout --clear \
+  	--backtitle "Vagrantfiles" \
+    --title "[ Choose Vagrant file ]" \
+    --radiolist "$isvagrantrunning$currentDir" \
+    $vagrantactionDialogHeight $dialogwidth 6 \
+    $dialogOptions
+  )
+  buttonClicked=${?}
+
+
+  if [ "$buttonClicked" == "1" ] || [ "$choosenVagrantBox" == '' ]
+	## exit if cancelled...
+    then
+      clear
+      exitAction
+      echo "Bye bye..."
+      exit;
+    ## ...else go into directory and call actiondialog
+    else
+      cd $choosenVagrantBox
+	  currentDir="\n\nCurrently I'm in\n$(pwd)"
+      if [ -f Vagrantfile ]
+        then
+          actiondialog
+          exit;
+        else
+          echo "Kein Vagrantfile gefunden!"
+      fi
+  fi
+}
+# ============================================================================
+
+## unset vars
+exitAction() {
+#  unset vagrantaction
+#  unset isvagrantrunning
+#  unset dialogHeight
+#  unset vagrantDirectories
+#  unset runningVagrantPath
+#  unset runningVagrantId
+#  unset savedVagrantPath
+#  unset savedVagrantId
+  echo "Bye bye... and have a nice day!"
+}
+
+getrunningvagrants() {
+  # === get all running vagrant boxes
+  # http://askubuntu.com/questions/457329/shutting-down-all-virtualbox-vagrant-vms-in-one-easy-to-use-bash-command-that      
+  runningVagrantPath="$(vagrant global-status | awk '/running/{print $5}')"
+  runningVagrantId="$(vagrant global-status | awk '/running/{print $1}')"
+  savedVagrantPath="$(vagrant global-status | awk '/saved/{print $5}')"
+  savedVagrantId="$(vagrant global-status | awk '/saved/{print $1}')"
+  if [ "$runningVagrantPath" != '' ]
+    then
+      isvagrantrunning="\nRunning Vagrant found in:\n$runningVagrantPath"
+      (( vagrantactionDialogHeight+=3 ))
+  fi
+  if [ "$savedVagrantPath" != '' ]
+    then
+      isvagrantrunning="\nSaved Vagrant found in:\n$savedVagrantPath"
+      (( vagrantactionDialogHeight+=3 ))
+  fi
+  currentDir="\n\nCurrently I'm in\n$(pwd)"
+}
+
+actiondialog() {
+  public_interface_status=`grep "enable-public:" config.yml | sed 's/.*: //g'`
+
+  vagrantaction=$(dialog --stdout --clear \
+    --backtitle "VirtualBox Manager" \
+    --title "What do you want to do today?" \
+    --menu \
+      "$isvagrantrunning$currentDir" \
+      $vagrantactionDialogHeight $dialogwidth 8 \
+      "up" "Start Vagrant" \
+      "halt" "Stop Vagrant" \
+      "reload" "Reload Vagrant" \
+      "restart-apache" "Restart Apache (if FIT is not correctily running)" \
+      "clear-cache" "Clear FIT Cache" \
+      "toggle-public-network" "Enable or disable public network interface ($public_interface_status)" \
+      "switch-version" "Switch FIT version" \
+      "shutdown-all" "SHUTDOWN all Vagrant and VirtualBox'es")
+  vagrantaction $vagrantaction
+}
+
+switchaction() {
+  #clear
+  case "$1" in
+    beta)
+      vagrant ssh -c '/vagrant/setup/switch-version.sh beta && exit'
+      echo "=== Done. Switched to beta ==="
+      ;;
+    stable)
+      vagrant ssh -c '/vagrant/setup/switch-version.sh stable && exit'
+      echo "=== Done. Switched to stable ==="
+      ;;
+  esac
+}
+
+switchdialog() {
+  [ $1 == 'beta' ] && beta=" (current)" || beta=""
+  [ $1 == 'stable' ] && stable=" (current)" || stable=""
+
+  switchaction=$(dialog --stdout --clear \
+    --backtitle "Switch FIT Version" \
+    --title "Which version?" \
+    --menu \
+      "which" \
+      10 $dialogwidth 2 \
+      "beta" "beta$beta" \
+      "stable" "stable$stable")
+  switchaction $switchaction
+}
+
+switchversion() {
+  
+  currentchannel=$(vagrant ssh -c "/vagrant/setup/which-version.sh" | grep Channel | sed -r 's/Channel: fit[0-9]*([a-z]*)[\r\n]*/\1/')
+  case "$currentchannel" in
+    beta|stable)
+      switchdialog $currentchannel
+      ;;
+    *)
+      dialog \
+        --title "No vagrant running" \
+        --msgbox "$currentDir\n\nThere is no vagrant running.\nPlease use the 'up' command in main menu." \
+        11 $dialogwidth
+      ;;
+  esac
+  actiondialog
+}
+
+restartapache() {
+  echo "=== Restart Apache... ==="
+  vagrant ssh -c 'echo "Status:";sudo /opt/sevenval/fit14/sbin/apachectl status;echo "Graceful restart Apache...";sudo /opt/sevenval/fit14/sbin/apachectl graceful;sleep 2;echo "New status:";sudo /opt/sevenval/fit14/sbin/apachectl status;echo "Ready";exit'
+}
+
+vagrantaction() {
+  clear
+  case "$1" in
+    up)
+      echo "=== Starting vagrant... ==="
+      vagrant up
+      restartapache
+      echo "=== Done. ==="
+      getrunningvagrants
+      actiondialog
+      ;;
+    halt)
+      echo "=== Stopping vagrant... ==="
+      vagrant halt
+      echo "=== Done. ==="
+      getrunningvagrants
+      actiondialog
+      ;;
+    reload)
+      echo "=== Reload vagrant... ==="
+      vagrant reload
+      restartapache
+      echo "=== Done. ==="
+      getrunningvagrants
+      actiondialog
+      ;;
+    restart-apache)
+      restartapache
+      actiondialog
+      ;;
+    clear-cache)
+      vagrant ssh -c 'cd /var/cache/fit14/;sudo -i fitadmin maintenance clearcache mytoys && exit'
+      dialog \
+        --title "Clear FIT Cache" \
+        --msgbox "\nDone." \
+        7 $dialogwidth
+      getrunningvagrants
+      actiondialog
+      ;;
+    toggle-public-network)
+      # public_interface_status=`grep "enable-public:" config.yml | sed 's/.*: //g'`
+
+      if [ "$public_interface_status" == "true" ]; then
+	sed -i 's/enable-public: true/enable-public: false/g' config.yml
+      else 
+	sed -i 's/enable-public: false/enable-public: true/g' config.yml
+      fi
+      actiondialog
+      ;;
+    switch-version)
+      switchversion
+      # automatically calls actiondialog
+      ;;
+    shutdown-all)
+      echo "=== Shutting down all Vagrant boxes... ==="
+      vagrant global-status | awk '/running|saved/{print $1}' | xargs -r -d '\n' -n 1 -- vagrant halt
+      echo "=== Save running VM's... ==="
+      vboxmanage list runningvms | sed -r 's/.*\{(.*)\}/\1/' | xargs -L1 -I {} VBoxManage controlvm {} savestate
+      echo "Done."
+      echo "Bye bye... and have a nice day!"
+      ;;
+    *)
+      exitAction
+      ;;
+  esac
+}
+
+if [[ $# -eq 0 ]]; then
+  selectboxdialog
+elif [[ $# -eq 1 && $1 == "shutdown-all" ]]; then
+  vagrantaction $1
+elif [[ $# -eq 2 && -d $1 && -f "$1/Vagrantfile" && $2 =~ $validActions ]]; then
+  clear
+  cd $1
+  vagrantaction $vagrantaction
+else
+  clear
+  echo "Illegal parameters or false Vagrant path."
+  echo "Parameters must be:"
+  echo "$(basename "$0") [<path: with Vagrantfile> <action: up|halt|reload|clear-cache|switch-version|shutdown-all>]"
+fi
+
+## === EOF
